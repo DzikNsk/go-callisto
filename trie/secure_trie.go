@@ -202,9 +202,10 @@ func (t *SecureTrie) hashKey(key []byte) []byte {
 	h := newHasher(false)
 	h.sha.Reset()
 	h.sha.Write(key)
-	h.sha.Read(t.hashKeyBuf[:])
+	buf := h.sha.Sum(t.hashKeyBuf[:0])
+	//h.sha.Read(t.hashKeyBuf[:])
 	returnHasherToPool(h)
-	return t.hashKeyBuf[:]
+	return buf
 }
 
 // getSecKeyCache returns the current secure key cache, creating a new one if

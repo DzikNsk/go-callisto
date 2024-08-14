@@ -33,16 +33,39 @@ type Config struct {
 	NoBaseFee               bool      // Forces the EIP-1559 baseFee to 0 (needed for 0 price calls)
 	EnablePreimageRecording bool      // Enables recording of SHA3/keccak preimages
 
-	JumpTable [256] operation // EVM instruction table, automatically populated if unset
+	JumpTable [256]operation // EVM instruction table, automatically populated if unset
 
 	ExtraEips []int // Additional EIPS that are to be enabled
 }
 
-// ScopeContext contains the things that are per-call, such as stack and memory,
+// Interpreter is used to run Ethereum based contracts and will utilise the
+// passed environment to query external sources for state information.
+// The Interpreter will run the byte code VM based on the passed
+// configuration.
+type Interpreter interface {
+	// Run loops and evaluates the contract's code with the given input data and returns
+	// the return byte-slice and an error if one occurred.
+	Run(contract *Contract, input []byte, static bool) ([]byte, error)
+	// CanRun tells if the contract, passed as an argument, can be
+	// run by the current interpreter. This is meant so that the
+	// caller can do something like:
+	//
+	// ```golang
+	// for _, interpreter := range interpreters {
+	//   if interpreter.CanRun(contract.code) {
+	//     interpreter.Run(contract.code, input)
+	//   }
+	// }
+	// ```
+	CanRun([]byte) bool
+}
+
+// callCtx contains the things that are per-call, such as stack and memory,
 // but not transients like pc and gas
 type ScopeContext struct {
 	Memory   *Memory
 	Stack    *Stack
+	rstack   *ReturnStack
 	Contract *Contract
 }
 
@@ -141,9 +164,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		op          OpCode        // current opcode
 		mem         = NewMemory() // bound memory
 		stack       = newstack()  // local stack
+		returns     = newReturnStack() // local returns stack
 		callContext = &ScopeContext{
 			Memory:   mem,
 			Stack:    stack,
+			rstack:   returns,
 			Contract: contract,
 		}
 		// For optimisation reason we're using uint64 as the program counter.
@@ -152,17 +177,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		pc   = uint64(0) // program counter
 		cost uint64
 		// copies used by tracer
-		pcCopy  uint64 // needed for the deferred EVMLogger
-		gasCopy uint64 // for EVMLogger to log gas remaining before execution
-		logged  bool   // deferred EVMLogger should ignore already logged steps
+		pcCopy  uint64 // needed for the deferred Tracer
+		gasCopy uint64 // for Tracer to log gas remaining before execution
+		logged  bool   // deferred Tracer should ignore already logged steps
 		res     []byte // result of the opcode execution function
 	)
-	// Don't move this deferrred function, it's placed before the capturestate-deferred method,
-	// so that it get's executed _after_: the capturestate needs the stacks before
-	// they are returned to the pools
-	defer func() {
-		returnStack(stack)
-	}()
 	contract.Input = input
 
 	if in.cfg.Debug {
@@ -277,4 +296,10 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		}
 	}
 	return nil, nil
+}
+
+// CanRun tells if the contract, passed as an argument, can be
+// run by the current interpreter.
+func (in *EVMInterpreter) CanRun(code []byte) bool {
+	return true
 }
