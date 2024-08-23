@@ -33,7 +33,7 @@ type Config struct {
 	NoBaseFee               bool      // Forces the EIP-1559 baseFee to 0 (needed for 0 price calls)
 	EnablePreimageRecording bool      // Enables recording of SHA3/keccak preimages
 
-	JumpTable [256] operation // EVM instruction table, automatically populated if unset
+	JumpTable [256]*operation // EVM instruction table, automatically populated if unset
 
 	ExtraEips []int // Additional EIPS that are to be enabled
 }
@@ -71,7 +71,7 @@ func NewEVMInterpreter(evm *EVM, cfg Config) *EVMInterpreter {
 	// We use the STOP instruction whether to see
 	// the jump table was initialised. If it was not
 	// we'll set the default jump table.
-	if !cfg.JumpTable[STOP].valid {
+	if cfg.JumpTable[STOP] == nil {
 		var jt JumpTable
 		switch {
 		case evm.chainRules.IsLondon:
@@ -122,7 +122,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	defer func() { in.evm.depth-- }()
 
 	// Make sure the readOnly is only set if we aren't in readOnly yet.
-	// This makes also sure that the readOnly flag isn't removed for child calls.
+	// This also makes sure that the readOnly flag isn't removed for child calls.
 	if readOnly && !in.readOnly {
 		in.readOnly = true
 		defer func() { in.readOnly = false }()
@@ -195,7 +195,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		// enough stack items available to perform the operation.
 		op = contract.GetOp(pc)
 		operation := in.cfg.JumpTable[op]
-		if !operation.valid {
+		if operation == nil {
 			return nil, &ErrInvalidOpCode{opcode: op}
 		}
 		// Validate stack
@@ -204,7 +204,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		} else if sLen > operation.maxStack {
 			return nil, &ErrStackOverflow{stackLen: sLen, limit: operation.maxStack}
 		}
-		// If the operation is valid, enforce and write restrictions
+		// If the operation is valid, enforce write restrictions
 		if in.readOnly && in.evm.chainRules.IsByzantium {
 			// If the interpreter is operating in readonly mode, make sure no
 			// state-modifying operation is performed. The 3rd stack item
